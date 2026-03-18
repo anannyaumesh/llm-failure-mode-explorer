@@ -35,7 +35,7 @@ To evaluate how modern large language models behave under realistic usage condit
 - Near-zero format errors across both models
 - Persistent constraint violations (~20–30%)
 - Reduced but non-zero hallucination rates using semantic evaluation
-- Performance differences across models, particularly in reasoning and instruction adherence
+- Observable differences in model behavior across task types
 
 ---
 
@@ -59,11 +59,17 @@ Combining multiple constraints (format + count + brevity) significantly increase
 
 ### 5. Model behavior differs across tasks
 
-While both models performed well overall, differences emerged in reasoning accuracy and consistency of instruction-following.
+While both models performed well overall, differences emerged in reasoning accuracy and consistency of instruction-following.  
+One model showed slightly better numerical reasoning, while the other demonstrated more consistent adherence to output structure, indicating that performance varies by task rather than overall capability.
 
 ### 6. Evaluation design significantly impacts conclusions
 
-Naive heuristics misclassified correct answers as failures, while semantic similarity improved robustness — highlighting the importance of evaluation methodology.
+Naive heuristics and semantic similarity thresholds can misclassify correct responses as failures, particularly for:
+
+- unit-based answers (e.g., "100°C" vs "100")
+- abstentions (e.g., "I don't know")
+
+This highlights the importance of carefully designed evaluation frameworks when assessing LLM behavior.
 
 ---
 
@@ -89,17 +95,18 @@ Returned 4 items → constraint violation
 Example 2:
 
 Prompt:  
-"What is the capital of Australia?"
+"What is (23 \* 47) + 18?"
 
 Model Output:  
-Returned incorrect or semantically mismatched answer
+Returned incorrect numerical result → reasoning failure
 
 ---
 
 ## Limitations
 
-- Evaluation relies on heuristic and semantic similarity thresholds
-- Short, correct answers (e.g., numeric outputs) may be misclassified
+- Evaluation relies on heuristic rules and semantic similarity thresholds
+- Correct answers with different representations (e.g., units or phrasing) may be misclassified
+- Abstentions may be incorrectly flagged as hallucinations
 - Dataset size is limited
 
 ---
@@ -108,7 +115,7 @@ Returned incorrect or semantically mismatched answer
 
 - `data/` – evaluation dataset
 - `src/` – prompting and evaluation pipeline
-- `results/` – model outputs
+- `results/` – model outputs (excluded from repository)
 - `analysis.ipynb` – analysis and insights
 
 ---
