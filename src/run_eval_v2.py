@@ -1,14 +1,5 @@
 """
 run_eval_v2.py
---------------
-Evaluation runner — v2 for EMNLP paper.
-
-Changes from v1:
-  - Added Gemini 1.5 Flash (Google AI Studio) and Qwen 2.5-72B (Together.ai)
-  - Passes row_id to evaluate_response (was missing in v1)
-  - Saves sub_constraint_results as JSON string column in output CSV
-  - Output path: results/results_v2.csv
-  - Dataset path: data/questions_v5.csv
 """
 
 import pandas as pd
@@ -64,15 +55,11 @@ groq_client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
 )
 
-# Gemini 1.5 Flash via Google AI Studio OpenAI-compatible endpoint
-# Get key at: https://aistudio.google.com/app/apikey
 gemini_client = OpenAI(
     api_key=os.getenv("GEMINI_API_KEY"),
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-# Qwen 2.5-72B via Together.ai OpenAI-compatible endpoint
-# Get key at: https://api.together.ai
 together_client = OpenAI(
     api_key=os.getenv("TOGETHER_API_KEY"),
     base_url="https://api.together.xyz/v1",
@@ -94,16 +81,6 @@ MODEL_REGISTRY = {
 }
 
 MODELS_TO_RUN = list(MODEL_REGISTRY.keys())
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Models that wrap JSON in markdown fences
-# ─────────────────────────────────────────────────────────────────────────────
-
-FENCE_WRAPPING_MODELS = {
-    "mistral-small",
-    "gemini-1.5-flash",
-    "qwen-2.5-72b",
-}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JSON parser
@@ -195,34 +172,38 @@ def safe_str(value) -> str:
     return str(value).strip() if value is not None else ""
 
 
-def _empty_result(model_name, row_id, question, category,
-                  subcategory, difficulty, expected, error_msg):
+def _empty_result(model_name, row_id, question, category, subcategory,
+                  difficulty, expected, constraint_complexity,
+                  constraint_priority, attack_intent, error_msg):
     return {
-        "model":                  model_name,
-        "id":                     row_id,
-        "question":               question,
-        "category":               category,
-        "subcategory":            subcategory,
-        "difficulty":             difficulty,
-        "expected":               expected,
-        "raw_output":             "",
-        "answer":                 "",
-        "confidence":             "",
-        "format_error":           True,
-        "parse_note":             error_msg,
-        "constraint_violation":   False,
-        "constraint_details":     "",
-        "sub_constraint_results": "{}",
-        "hallucination":          False,
-        "hallucination_details":  "",
-        "incomplete":             True,
-        "incomplete_details":     f"API error: {error_msg}",
-        "sycophancy":             False,
-        "sycophancy_details":     "",
-        "injection_success":      False,
-        "system_prompt_leak":     False,
-        "injection_details":      "",
-        "error":                  error_msg,
+        "model":                   model_name,
+        "id":                      row_id,
+        "question":                question,
+        "category":                category,
+        "subcategory":             subcategory,
+        "difficulty":              difficulty,
+        "expected":                expected,
+        "constraint_complexity":   constraint_complexity,
+        "constraint_priority":     constraint_priority,
+        "attack_intent":           attack_intent,
+        "raw_output":              "",
+        "answer":                  "",
+        "confidence":              "",
+        "format_error":            True,
+        "parse_note":              error_msg,
+        "constraint_violation":    False,
+        "constraint_details":      "",
+        "sub_constraint_results":  "{}",
+        "hallucination":           False,
+        "hallucination_details":   "",
+        "incomplete":              True,
+        "incomplete_details":      f"API error: {error_msg}",
+        "sycophancy":              False,
+        "sycophancy_details":      "",
+        "injection_success":       False,
+        "system_prompt_leak":      False,
+        "injection_details":       "",
+        "error":                   error_msg,
     }
 
 
@@ -279,7 +260,7 @@ def run_evaluation(
 
     df = pd.read_csv(dataset_path)
 
-    # Column name compatibility (v1 used "type" not "category")
+    # Column name compatibility — v4 uses "type" and "expected_answer"
     if "category" not in df.columns and "type" in df.columns:
         df = df.rename(columns={"type": "category"})
     if "expected" not in df.columns and "expected_answer" in df.columns:
@@ -312,12 +293,15 @@ def run_evaluation(
         for _, row in df.iterrows():
             call_count += 1
 
-            row_id      = safe_str(row.get("id", ""))
-            question    = safe_str(row.get("question", ""))
-            category    = safe_str(row.get("category", ""))
-            subcategory = safe_str(row.get("subcategory", ""))
-            difficulty  = safe_str(row.get("difficulty", ""))
-            expected    = safe_str(row.get("expected", ""))
+            row_id                 = safe_str(row.get("id", ""))
+            question               = safe_str(row.get("question", ""))
+            category               = safe_str(row.get("category", ""))
+            subcategory            = safe_str(row.get("subcategory", ""))
+            difficulty             = safe_str(row.get("difficulty", ""))
+            expected               = safe_str(row.get("expected", ""))
+            constraint_complexity  = safe_str(row.get("constraint_complexity", ""))
+            constraint_priority    = safe_str(row.get("constraint_priority", ""))
+            attack_intent          = safe_str(row.get("attack_intent", ""))
 
             if not question:
                 log.warning(f"Skipping row {row_id}: empty question")
@@ -338,8 +322,9 @@ def run_evaluation(
                 log.error(f"API error id={row_id}: {api_error[:120]}")
                 results.append(
                     _empty_result(
-                        model_name, row_id, question, category,
-                        subcategory, difficulty, expected, api_error
+                        model_name, row_id, question, category, subcategory,
+                        difficulty, expected, constraint_complexity,
+                        constraint_priority, attack_intent, api_error
                     )
                 )
                 _maybe_checkpoint(results)
@@ -366,7 +351,7 @@ def run_evaluation(
                 category=category,
                 subcategory=subcategory,
                 question=question,
-                row_id=row_id,          # fixed: was missing in v1
+                row_id=row_id,
             )
 
             # Log key signals
@@ -393,6 +378,9 @@ def run_evaluation(
                 "subcategory":            subcategory,
                 "difficulty":             difficulty,
                 "expected":               expected,
+                "constraint_complexity":  constraint_complexity,
+                "constraint_priority":    constraint_priority,
+                "attack_intent":          attack_intent,
                 "raw_output":             raw_output,
                 "answer":                 answer,
                 "confidence":             confidence,
@@ -422,12 +410,12 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset",  default="data/questions_v5.csv")
-    parser.add_argument("--output",   default="results/results_v2.csv")
-    parser.add_argument("--sample",   type=int, default=None,
+    parser.add_argument("--dataset", default="data/questions_v5.csv")
+    parser.add_argument("--output",  default="results/results_v2.csv")
+    parser.add_argument("--sample",  type=int, default=None,
                         help="Run on N rows only (smoke test)")
-    parser.add_argument("--models",   nargs="+", default=None,
-                        help="Run specific models only e.g. --models gemini-1.5-flash qwen-2.5-72b")
+    parser.add_argument("--models",  nargs="+", default=None,
+                        help="Specific models e.g. --models gemini-1.5-flash qwen-2.5-72b")
     args = parser.parse_args()
 
     run_evaluation(
